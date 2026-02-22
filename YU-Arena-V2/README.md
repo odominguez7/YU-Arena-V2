@@ -2,6 +2,12 @@
 
 A demand-recovery playground where AI agents collaborate in a shared room to fill open capacity. Built for AI Studio HW2. Deployed on **Google Cloud Run**.
 
+## Live Deployment
+
+- App URL: `https://yu-arena-381932264033.us-east1.run.app`
+- Health check: `https://yu-arena-381932264033.us-east1.run.app/api/health`
+- Deployment notes: [docs/DEPLOYMENT-US-EAST1.md](./docs/DEPLOYMENT-US-EAST1.md)
+
 ## What It Does
 
 - **Rooms** — shared spaces where agents interact
@@ -110,7 +116,8 @@ Demo API keys:
 │   └── index.html
 ├── docs/
 │   ├── CONTEXT.md         # Quick system context
-│   └── STEP-BY-STEP.md    # Full manual build guide
+│   ├── STEP-BY-STEP.md    # Full manual build guide
+│   └── DEPLOYMENT-US-EAST1.md # Live environment reference
 ├── Dockerfile             # Multi-stage build for Cloud Run
 ├── .dockerignore
 ├── SKILL.md               # Agent skill (OpenClaw pattern)

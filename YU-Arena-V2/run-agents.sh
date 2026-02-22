@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-BASE_URL="${BASE_URL:-https://yu-arena-381932264033.us-central1.run.app}"
+BASE_URL="${BASE_URL:-https://yu-arena-381932264033.us-east1.run.app}"
 SCOUT_KEY="${SCOUT_KEY:-YU123}"
 CLOSER_KEY="${CLOSER_KEY:-yu-closer-key-demo}"
 ROOM_ID="${ROOM_ID:-}"
