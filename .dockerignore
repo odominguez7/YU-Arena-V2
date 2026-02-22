@@ -1,0 +1,15 @@
+node_modules
+server/node_modules
+web/node_modules
+server/dist
+web/dist
+*.db
+*.db-shm
+*.db-wal
+.env
+.DS_Store
+.git
+.gcloud-config
+*.pptx
+*.docx
+agents

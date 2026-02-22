@@ -1,0 +1,288 @@
+import { Router, Request, Response } from "express";
+import { v4 as uuid } from "uuid";
+import { db } from "./db";
+import { requireAuth, optionalAuth, AuthenticatedRequest } from "./auth";
+import { idempotency } from "./idempotency";
+import { broadcastToRoom } from "./ws";
+
+const router = Router();
+
+// ─── Prepared statements ─────────────────────────────────
+
+const stmts = {
+  insertRoom: db.prepare(`INSERT INTO rooms (id, name) VALUES (?, ?)`),
+  listRooms: db.prepare(`SELECT * FROM rooms ORDER BY created_at DESC`),
+  getRoom: db.prepare(`SELECT * FROM rooms WHERE id = ?`),
+
+  insertOpportunity: db.prepare(
+    `INSERT INTO opportunities (id, room_id, title, created_by) VALUES (?, ?, ?, ?)`
+  ),
+  getOpportunity: db.prepare(`SELECT * FROM opportunities WHERE id = ?`),
+  listOpportunitiesByRoom: db.prepare(
+    `SELECT * FROM opportunities WHERE room_id = ? ORDER BY created_at DESC`
+  ),
+  claimOpportunity: db.prepare(
+    `UPDATE opportunities SET status = 'claimed', claimed_by = ?, updated_at = datetime('now') WHERE id = ? AND status = 'open'`
+  ),
+  releaseOpportunity: db.prepare(
+    `UPDATE opportunities SET status = 'open', claimed_by = NULL, updated_at = datetime('now') WHERE id = ? AND status = 'claimed' AND claimed_by = ?`
+  ),
+  resolveOpportunity: db.prepare(
+    `UPDATE opportunities SET status = 'resolved', updated_at = datetime('now') WHERE id = ? AND status = 'claimed' AND claimed_by = ?`
+  ),
+
+  insertEvent: db.prepare(
+    `INSERT INTO events (id, room_id, type, actor, payload) VALUES (?, ?, ?, ?, ?)`
+  ),
+  listEvents: db.prepare(
+    `SELECT * FROM events WHERE room_id = ? ORDER BY created_at DESC LIMIT ?`
+  ),
+};
+
+// ─── Helper: create + broadcast event ────────────────────
+
+function emitEvent(
+  roomId: string,
+  type: string,
+  actor: string,
+  payload: Record<string, unknown> = {}
+): Record<string, unknown> {
+  const eventId = uuid();
+  const now = new Date().toISOString();
+  stmts.insertEvent.run(eventId, roomId, type, actor, JSON.stringify(payload));
+
+  const event = { id: eventId, room_id: roomId, type, actor, payload, created_at: now };
+  broadcastToRoom(roomId, event);
+  return event;
+}
+
+// ═══════════════════════════════════════════════════════════
+// ROOMS
+// ═══════════════════════════════════════════════════════════
+
+router.post("/rooms", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const { name } = req.body;
+  if (!name || typeof name !== "string") {
+    res.status(400).json({ error: "name is required (string)" });
+    return;
+  }
+  const id = uuid();
+  stmts.insertRoom.run(id, name.trim());
+  const room = stmts.getRoom.get(id);
+  res.status(201).json(room);
+});
+
+router.get("/rooms", (_req: Request, res: Response) => {
+  const rooms = stmts.listRooms.all();
+  res.json(rooms);
+});
+
+router.get("/rooms/:id", (req: Request, res: Response) => {
+  const room = stmts.getRoom.get(req.params.id) as Record<string, unknown> | undefined;
+  if (!room) {
+    res.status(404).json({ error: "Room not found" });
+    return;
+  }
+  const opportunities = stmts.listOpportunitiesByRoom.all(req.params.id);
+  const events = stmts.listEvents.all(req.params.id, 50);
+  res.json({ ...room, opportunities, recent_events: events });
+});
+
+// ═══════════════════════════════════════════════════════════
+// MESSAGES
+// ═══════════════════════════════════════════════════════════
+
+router.post(
+  "/rooms/:id/messages",
+  requireAuth,
+  idempotency,
+  (req: AuthenticatedRequest, res: Response) => {
+    const room = stmts.getRoom.get(req.params.id);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+
+    const { text } = req.body;
+    if (!text || typeof text !== "string") {
+      res.status(400).json({ error: "text is required (string)" });
+      return;
+    }
+
+    const event = emitEvent(req.params.id, "agent_message", req.agentName!, { text });
+    res.status(201).json(event);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// OPPORTUNITIES
+// ═══════════════════════════════════════════════════════════
+
+router.post(
+  "/rooms/:id/opportunities",
+  optionalAuth,
+  idempotency,
+  (req: AuthenticatedRequest, res: Response) => {
+    const room = stmts.getRoom.get(req.params.id);
+    if (!room) {
+      res.status(404).json({ error: "Room not found" });
+      return;
+    }
+
+    const { title } = req.body;
+    if (!title || typeof title !== "string") {
+      res.status(400).json({ error: "title is required (string)" });
+      return;
+    }
+
+    const id = uuid();
+    const actor = req.agentName || "human";
+    stmts.insertOpportunity.run(id, req.params.id, title.trim(), actor);
+
+    const opportunity = stmts.getOpportunity.get(id);
+    emitEvent(req.params.id, "opportunity_created", actor, {
+      opportunity_id: id,
+      title: title.trim(),
+    });
+
+    res.status(201).json(opportunity);
+  }
+);
+
+router.post(
+  "/opportunities/:id/claim",
+  requireAuth,
+  idempotency,
+  (req: AuthenticatedRequest, res: Response) => {
+    const opp = stmts.getOpportunity.get(req.params.id) as Record<string, unknown> | undefined;
+    if (!opp) {
+      res.status(404).json({ error: "Opportunity not found" });
+      return;
+    }
+    if (opp.status !== "open") {
+      res.status(409).json({ error: `Cannot claim: opportunity status is '${opp.status}'` });
+      return;
+    }
+
+    const result = stmts.claimOpportunity.run(req.agentName!, req.params.id);
+    if (result.changes === 0) {
+      res.status(409).json({ error: "Claim failed — opportunity was claimed by another agent" });
+      return;
+    }
+
+    const updated = stmts.getOpportunity.get(req.params.id);
+    emitEvent(opp.room_id as string, "opportunity_claimed", req.agentName!, {
+      opportunity_id: req.params.id,
+      title: opp.title,
+    });
+
+    res.json(updated);
+  }
+);
+
+router.post(
+  "/opportunities/:id/release",
+  requireAuth,
+  idempotency,
+  (req: AuthenticatedRequest, res: Response) => {
+    const opp = stmts.getOpportunity.get(req.params.id) as Record<string, unknown> | undefined;
+    if (!opp) {
+      res.status(404).json({ error: "Opportunity not found" });
+      return;
+    }
+    if (opp.status !== "claimed" || opp.claimed_by !== req.agentName) {
+      res.status(409).json({
+        error: "Cannot release: you don't hold this opportunity or it's not claimed",
+      });
+      return;
+    }
+
+    stmts.releaseOpportunity.run(req.params.id, req.agentName!);
+    const updated = stmts.getOpportunity.get(req.params.id);
+    emitEvent(opp.room_id as string, "opportunity_released", req.agentName!, {
+      opportunity_id: req.params.id,
+      title: opp.title,
+    });
+
+    res.json(updated);
+  }
+);
+
+router.post(
+  "/opportunities/:id/resolve",
+  requireAuth,
+  idempotency,
+  (req: AuthenticatedRequest, res: Response) => {
+    const opp = stmts.getOpportunity.get(req.params.id) as Record<string, unknown> | undefined;
+    if (!opp) {
+      res.status(404).json({ error: "Opportunity not found" });
+      return;
+    }
+    if (opp.status !== "claimed" || opp.claimed_by !== req.agentName) {
+      res.status(409).json({
+        error: "Cannot resolve: you don't hold this opportunity or it's not claimed",
+      });
+      return;
+    }
+
+    const { outcome } = req.body || {};
+    stmts.resolveOpportunity.run(req.params.id, req.agentName!);
+    const updated = stmts.getOpportunity.get(req.params.id);
+    emitEvent(opp.room_id as string, "opportunity_resolved", req.agentName!, {
+      opportunity_id: req.params.id,
+      title: opp.title,
+      outcome: outcome || "resolved",
+    });
+
+    res.json(updated);
+  }
+);
+
+// ═══════════════════════════════════════════════════════════
+// SCOUT DECISIONS (WS-native coordination)
+// ═══════════════════════════════════════════════════════════
+
+router.post("/rooms/:id/decisions", requireAuth, (req: AuthenticatedRequest, res: Response) => {
+  const roomId = req.params.id;
+
+  const { opportunity_id, decision, score, reasons } = req.body ?? {};
+
+  if (!opportunity_id || !decision) {
+    return res.status(400).json({ error: "Missing opportunity_id or decision" });
+  }
+
+  if (decision !== "CLAIM" && decision !== "IGNORE") {
+    return res.status(400).json({ error: 'decision must be "CLAIM" or "IGNORE"' });
+  }
+
+  const room = stmts.getRoom.get(roomId);
+  if (!room) return res.status(404).json({ error: "Room not found" });
+
+  const opp = stmts.getOpportunity.get(opportunity_id) as Record<string, unknown> | undefined;
+  if (!opp) return res.status(404).json({ error: "Opportunity not found" });
+
+  if ((opp.room_id as string) !== roomId) {
+    return res.status(400).json({ error: "Opportunity does not belong to this room" });
+  }
+
+  emitEvent(roomId, "scout_decision_made", req.agentName!, {
+    opportunity_id,
+    decision,
+    score: typeof score === "number" ? score : null,
+    reasons: Array.isArray(reasons) ? reasons : [],
+  });
+
+  return res.status(201).json({ ok: true });
+});
+
+// ═══════════════════════════════════════════════════════════
+// EVENTS
+// ═══════════════════════════════════════════════════════════
+
+router.get("/rooms/:id/events", (req: Request, res: Response) => {
+  const limit = Math.min(parseInt(req.query.limit as string) || 200, 500);
+  const events = stmts.listEvents.all(req.params.id, limit);
+  res.json(events);
+});
+
+export default router;

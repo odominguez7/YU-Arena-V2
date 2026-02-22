@@ -1,0 +1,158 @@
+
+const WebSocket = require("ws");
+const fs = require("fs");
+const path = require("path");
+
+const ROOM_ID = process.env.ROOM_ID;
+const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3001";
+const API_BASE = process.env.API_BASE || `${BASE_URL}/api`;
+const API_KEY = process.env.SCOUT_API_KEY || "yu-scout-key-demo";
+
+// Coordination output (append-only)
+const DECISIONS_PATH =
+  process.env.DECISIONS_PATH ||
+  path.join(__dirname, "..", "shared", "decisions.jsonl");
+
+// For now: claim anything open + unclaimed that is fresh
+const FRESH_WINDOW_MS = Number(process.env.FRESH_WINDOW_MS || 10 * 60 * 1000); // 10 min
+
+if (!ROOM_ID) {
+  console.error("Missing ROOM_ID. Run like: ROOM_ID=<roomId> node index.js");
+  process.exit(1);
+}
+
+function safeJsonParse(s) {
+  try { return JSON.parse(s); } catch { return null; }
+}
+async function postDecision(roomId, opportunityId, decision, score, reasons) {
+  const res = await fetch(`${API_BASE}/rooms/${roomId}/decisions`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${API_KEY}`,
+    },
+    body: JSON.stringify({
+      opportunity_id: opportunityId,
+      decision,
+      score,
+      reasons,
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text();
+    console.error("Decision POST failed:", res.status, text);
+  }
+}
+
+async function fetchRoom(roomId) {
+  const res = await fetch(`${API_BASE}/rooms/${roomId}`, {
+    headers: { Authorization: `Bearer ${API_KEY}` }
+  });
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch {}
+  return { ok: res.ok, status: res.status, body: json ?? text };
+}
+
+function parseCreatedAt(opp) {
+  const s = opp?.created_at;
+  if (!s || typeof s !== "string") return null;
+  const iso = s.includes("T") ? s : s.replace(" ", "T") + "Z";
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
+}
+
+function scoreOpportunity(opp) {
+  const status = opp?.status ?? "unknown";
+  const claimedBy = opp?.claimed_by ?? null;
+
+  let score = 0;
+  const reasons = [];
+
+  if (status === "open") { score += 0.5; reasons.push("status=open"); }
+  else reasons.push(`status=${status}`);
+
+  if (!claimedBy) { score += 0.3; reasons.push("unclaimed"); }
+  else reasons.push(`claimed_by=${claimedBy}`);
+
+  const createdT = parseCreatedAt(opp);
+  if (createdT && (Date.now() - createdT) <= FRESH_WINDOW_MS) {
+    score += 0.2;
+    reasons.push("fresh");
+  } else {
+    reasons.push("not_fresh_or_unknown_time");
+  }
+
+  score = Math.max(0, Math.min(1, score));
+  const decision = score >= 0.75 ? "CLAIM" : "IGNORE";
+
+  return { decision, score: Number(score.toFixed(2)), reasons };
+}
+
+function appendDecision(lineObj) {
+  try {
+    fs.appendFileSync(DECISIONS_PATH, JSON.stringify(lineObj) + "\n", "utf8");
+  } catch (e) {
+    console.error("Failed writing decision:", e);
+  }
+}
+
+const url = BASE_URL.replace(/^http/, "ws") + `/ws?roomId=${encodeURIComponent(ROOM_ID)}`;
+console.log("Scout connecting:", url);
+//console.log("Decisions file:", DECISIONS_PATH);
+
+const ws = new WebSocket(url);
+
+ws.on("open", () => console.log("Scout connected ✅"));
+
+ws.on("message", async (data) => {
+  const ts = new Date().toISOString();
+  const raw = data.toString();
+  const evt = safeJsonParse(raw);
+
+  if (!evt) return;
+
+  if (evt.type === "connected") {
+    console.log(`[${ts}] connected room=${evt.roomId}`);
+    return;
+  }
+
+  if (evt.type !== "opportunity_created") return;
+
+  const opportunityId = evt?.payload?.opportunity_id;
+  const title = evt?.payload?.title;
+
+  console.log(`[${ts}] DETECTED opportunity_created id=${opportunityId} title="${title}" actor=${evt.actor}`);
+
+  const room = await fetchRoom(ROOM_ID);
+  if (!room.ok) {
+    console.log(`[${ts}] Room fetch failed status=${room.status} body=`, room.body);
+    return;
+  }
+
+  const opp = (room.body?.opportunities || []).find(o => o.id === opportunityId);
+  if (!opp) {
+    console.log(`[${ts}] Could not find opportunity in room snapshot. id=${opportunityId}`);
+    return;
+  }
+
+  const decision = scoreOpportunity(opp);
+
+  const decisionObj = {
+    ts,
+    room_id: ROOM_ID,
+    opportunity_id: opportunityId,
+    title: opp.title,
+    decision: decision.decision,
+    score: decision.score,
+    reasons: decision.reasons
+  };
+
+  console.log(`[${ts}] DECISION`, JSON.stringify(decisionObj));
+ // appendDecision(decisionObj);
+await postDecision(ROOM_ID, decisionObj.opportunity_id, decisionObj.decision, decisionObj.score, decisionObj.reasons);
+});
+
+ws.on("close", () => console.log("Scout disconnected"));
+ws.on("error", (err) => console.error("Scout error:", err));

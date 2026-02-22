@@ -1,0 +1,1 @@
+{"root":["./src/App.tsx","./src/main.tsx","./src/vite-env.d.ts","./src/components/EventFeed.tsx","./src/components/OpportunityBoard.tsx","./src/components/RoomList.tsx","./src/components/RoomView.tsx","./src/hooks/useWebSocket.ts","./src/utils/time.ts"],"version":"5.9.3"}

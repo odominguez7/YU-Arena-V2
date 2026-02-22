@@ -1,0 +1,10 @@
+<svg width="96" height="56" viewBox="0 0 96 56" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="MIT logo">
+  <rect width="96" height="56" fill="#000000"/>
+  <rect x="8" y="8" width="10" height="40" fill="#e8e8e8"/>
+  <rect x="24" y="8" width="10" height="28" fill="#e8e8e8"/>
+  <rect x="40" y="8" width="10" height="40" fill="#e8e8e8"/>
+  <rect x="56" y="8" width="10" height="18" fill="#e8e8e8"/>
+  <rect x="56" y="30" width="10" height="18" fill="#e8e8e8"/>
+  <rect x="72" y="8" width="24" height="10" fill="#e8e8e8"/>
+  <rect x="72" y="24" width="10" height="24" fill="#e8e8e8"/>
+</svg>

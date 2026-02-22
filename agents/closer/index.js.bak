@@ -1,0 +1,136 @@
+/**
+ * Closer Agent — listens for scout_decision_made via WebSocket,
+ * claims opportunities the Scout recommended, then resolves them.
+ *
+ * Usage:
+ *   ROOM_ID=<id> node index.js
+ *
+ * Environment:
+ *   BASE_URL  — API base (default http://127.0.0.1:3001)
+ *   API_KEY   — Closer API key (default from CLOSER_API_KEY or demo key)
+ *   ROOM_ID   — Room to join (required)
+ */
+
+const WebSocket = require("ws");
+
+const BASE_URL = process.env.BASE_URL || "http://127.0.0.1:3001";
+const API_KEY = process.env.API_KEY || process.env.CLOSER_API_KEY || "yu-closer-key-demo";
+const ROOM_ID = process.env.ROOM_ID;
+
+if (!ROOM_ID) {
+  console.error("ERROR: ROOM_ID environment variable is required.");
+  process.exit(1);
+}
+
+const headers = {
+  "Content-Type": "application/json",
+  Authorization: `Bearer ${API_KEY}`,
+};
+
+async function postMessage(text) {
+  try {
+    await fetch(`${BASE_URL}/api/rooms/${ROOM_ID}/messages`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ text }),
+    });
+  } catch (err) {
+    console.error("[Closer] Failed to post message:", err.message);
+  }
+}
+
+async function claimOpportunity(opportunityId) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/opportunities/${opportunityId}/claim`, {
+      method: "POST",
+      headers,
+    });
+    const data = await res.json();
+    if (res.status === 409) {
+      console.log(`[Closer] Claim conflict for ${opportunityId}:`, data.error);
+      return false;
+    }
+    console.log(`[Closer] Claimed opportunity ${opportunityId}`);
+    return true;
+  } catch (err) {
+    console.error("[Closer] Claim failed:", err.message);
+    return false;
+  }
+}
+
+async function resolveOpportunity(opportunityId, title) {
+  try {
+    const res = await fetch(`${BASE_URL}/api/opportunities/${opportunityId}/resolve`, {
+      method: "POST",
+      headers,
+      body: JSON.stringify({ outcome: `Capacity recovered for "${title}"` }),
+    });
+    const data = await res.json();
+    console.log(`[Closer] Resolved opportunity ${opportunityId}`, data);
+    return true;
+  } catch (err) {
+    console.error("[Closer] Resolve failed:", err.message);
+    return false;
+  }
+}
+
+function connect() {
+  const wsUrl = BASE_URL.replace(/^http/, "ws") + `/ws?roomId=${ROOM_ID}`;
+  console.log(`[Closer] Connecting to ${wsUrl}`);
+
+  const ws = new WebSocket(wsUrl);
+
+  ws.on("open", () => {
+    console.log("[Closer] Connected to room", ROOM_ID);
+    postMessage("Closer online. Waiting for Scout recommendations...");
+  });
+
+  ws.on("message", async (raw) => {
+    try {
+      const event = JSON.parse(raw.toString());
+
+      if (event.type === "connected") return;
+
+      if (event.type === "scout_decision_made") {
+        const payload = event.payload;
+
+        if (payload.decision !== "CLAIM") {
+          console.log(`[Closer] Scout says IGNORE for ${payload.opportunity_id}. Skipping.`);
+          return;
+        }
+
+        console.log(`[Closer] Scout says CLAIM for ${payload.opportunity_id}. Acting...`);
+        await postMessage(`Received Scout recommendation. Claiming opportunity...`);
+
+        const claimed = await claimOpportunity(payload.opportunity_id);
+        if (!claimed) {
+          await postMessage(`Could not claim opportunity — already taken.`);
+          return;
+        }
+
+        await postMessage(`Opportunity claimed. Working on recovery...`);
+
+        await new Promise((r) => setTimeout(r, 1500));
+
+        const title = payload.title || payload.opportunity_id;
+        const resolved = await resolveOpportunity(payload.opportunity_id, title);
+        if (resolved) {
+          await postMessage(`Resolved: "${title}" — capacity recovered.`);
+        }
+      }
+    } catch (err) {
+      console.error("[Closer] Error processing message:", err.message);
+    }
+  });
+
+  ws.on("close", () => {
+    console.log("[Closer] Disconnected. Reconnecting in 3s...");
+    setTimeout(connect, 3000);
+  });
+
+  ws.on("error", (err) => {
+    console.error("[Closer] WebSocket error:", err.message);
+  });
+}
+
+connect();

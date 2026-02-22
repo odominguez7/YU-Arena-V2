@@ -1,0 +1,4 @@
+{"ts":"2026-02-17T19:31:08.035Z","room_id":"21261e92-9fef-41e8-9c5c-fc5906dec49f","opportunity_id":"3d64be51-79be-47a0-b784-e944c0379560","title":"Coord test (fresh)","decision":"CLAIM","score":1,"reasons":["status=open","unclaimed","fresh"]}
+{"ts":"2026-02-17T19:43:43.408Z","room_id":"21261e92-9fef-41e8-9c5c-fc5906dec49f","opportunity_id":"573c07cd-9c18-4411-a424-3f0fce89eb48","title":"Coordinated drop FINAL","decision":"CLAIM","score":1,"reasons":["status=open","unclaimed","fresh"]}
+{"ts":"2026-02-17T19:52:25.612Z","room_id":"21261e92-9fef-41e8-9c5c-fc5906dec49f","opportunity_id":"a717fbc2-a849-4346-b401-7cd15f33dd29","title":"Coordinated drop RUN","decision":"CLAIM","score":1,"reasons":["status=open","unclaimed","fresh"]}
+{"ts":"2026-02-17T21:49:23.556Z","room_id":"4bc06079-9bfc-4d96-99f7-9dbbeb151bf2","opportunity_id":"db6733f8-cb50-4ea6-aeaa-442643766857","title":"DROP test 2","decision":"CLAIM","score":1,"reasons":["status=open","unclaimed","fresh"]}

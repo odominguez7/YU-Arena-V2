@@ -1,0 +1,1 @@
+bash apply_presence_patch.sh
