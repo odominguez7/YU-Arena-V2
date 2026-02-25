@@ -6,6 +6,7 @@ import fs from "fs";
 import { setupWebSocket } from "./ws";
 import routes, { expireLiveDrops } from "./routes";
 import { initDb } from "./db";
+import { startDemoEngine, getDemoState } from "./demo-engine";
 
 // ─── Load .env from project root (dev only) ──────────
 
@@ -50,6 +51,10 @@ app.get("/api/health", (_req, res) => {
   res.json({ status: "ok", service: "yu-arena", timestamp: new Date().toISOString() });
 });
 
+app.get("/api/arena/state", (_req, res) => {
+  res.json(getDemoState());
+});
+
 // ─── API Routes ──────────────────────────────────────
 
 app.use("/api", routes);
@@ -58,8 +63,9 @@ app.use("/api", routes);
 
 const webDist = path.join(__dirname, "..", "..", "web", "dist");
 if (fs.existsSync(webDist)) {
-  app.use(express.static(webDist));
+  app.use(express.static(webDist, { maxAge: "1h" }));
   app.get(/^\/(?!api|ws).*/, (_req, res) => {
+    res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
     res.sendFile(path.join(webDist, "index.html"));
   });
 }
@@ -80,9 +86,14 @@ initDb()
       });
     }, DROP_EXPIRY_SWEEP_MS);
 
+    if (process.env.DEMO_AUTO_START !== "false") {
+      startDemoEngine();
+    }
+
     server.listen(PORT, "0.0.0.0", () => {
       console.log(`YU Arena API running on http://0.0.0.0:${PORT}`);
       console.log(`WebSocket at ws://0.0.0.0:${PORT}/ws?operatorId=<id>`);
+      console.log(`Arena Demo at http://0.0.0.0:${PORT}/`);
     });
   })
   .catch((err) => {

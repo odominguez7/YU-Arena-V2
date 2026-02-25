@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { useParams, useNavigate } from "react-router-dom";
+import { useParams, useNavigate, useLocation } from "react-router-dom";
 import { api } from "../api";
 import { useWebSocket } from "../hooks/useWebSocket";
 import CountdownTimer from "./CountdownTimer";
@@ -30,7 +30,9 @@ interface DropData {
 export default function DropDetail() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const [drop, setDrop] = useState<DropData | null>(null);
+  const flashMessage = (location.state as { message?: string } | null)?.message;
   const [error, setError] = useState("");
   const { events } = useWebSocket(drop?.operator_id ?? null);
 
@@ -80,6 +82,11 @@ export default function DropDetail() {
         )}
       </div>
 
+      {flashMessage && (
+        <div className="filled-banner" style={{ backgroundColor: "var(--accent)" }}>
+          {flashMessage}
+        </div>
+      )}
       {isFilled && (
         <div className="filled-banner">
           Filled! Recovered {price}

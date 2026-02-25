@@ -7,6 +7,7 @@ import DropDetail from "./components/DropDetail";
 import ClaimPage from "./components/ClaimPage";
 import Results from "./components/Results";
 import Settings from "./components/Settings";
+import ArenaDemo from "./components/ArenaDemo";
 
 function AppRoutes() {
   const { operator, loading, login, logout } = useAuth();
@@ -18,25 +19,29 @@ function AppRoutes() {
 
   return (
     <Routes>
+      {/* Arena Demo — public, no auth needed */}
+      <Route path="/" element={<ArenaDemo />} />
+      <Route path="/arena" element={<ArenaDemo />} />
+
       <Route path="/claim/:dropId" element={<ClaimPage />} />
 
       <Route
         path="/login"
         element={
           operator ? (
-            <Navigate to="/" replace />
+            <Navigate to="/operator" replace />
           ) : (
-            <Login onLogin={async (code) => { await login(code); navigate("/"); }} />
+            <Login onLogin={async (code) => { await login(code); navigate("/operator"); }} />
           )
         }
       />
 
       {!operator ? (
-        <Route path="*" element={<Navigate to="/login" replace />} />
+        <Route path="/operator/*" element={<Navigate to="/login" replace />} />
       ) : (
         <>
           <Route
-            path="/"
+            path="/operator"
             element={
               <Shell businessName={operator.business_name} onLogout={() => { logout(); navigate("/login"); }}>
                 <Dashboard operatorId={operator.id} businessName={operator.business_name} />
@@ -44,7 +49,7 @@ function AppRoutes() {
             }
           />
           <Route
-            path="/drop/new"
+            path="/operator/drop/new"
             element={
               <Shell businessName={operator.business_name} onLogout={() => { logout(); navigate("/login"); }}>
                 <CreateDrop />
@@ -52,7 +57,7 @@ function AppRoutes() {
             }
           />
           <Route
-            path="/drop/:id"
+            path="/operator/drop/:id"
             element={
               <Shell businessName={operator.business_name} onLogout={() => { logout(); navigate("/login"); }}>
                 <DropDetail />
@@ -60,7 +65,7 @@ function AppRoutes() {
             }
           />
           <Route
-            path="/results"
+            path="/operator/results"
             element={
               <Shell businessName={operator.business_name} onLogout={() => { logout(); navigate("/login"); }}>
                 <Results />
@@ -68,16 +73,17 @@ function AppRoutes() {
             }
           />
           <Route
-            path="/settings"
+            path="/operator/settings"
             element={
               <Shell businessName={operator.business_name} onLogout={() => { logout(); navigate("/login"); }}>
                 <Settings businessName={operator.business_name} onLogout={() => { logout(); navigate("/login"); }} />
               </Shell>
             }
           />
-          <Route path="*" element={<Navigate to="/" replace />} />
         </>
       )}
+
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }
@@ -86,14 +92,17 @@ function Shell({ children }: { children: React.ReactNode; businessName: string; 
   return (
     <div className="app">
       <nav className="bottom-nav">
-        <NavLink to="/" end className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
+        <NavLink to="/operator" end className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
           Dashboard
         </NavLink>
-        <NavLink to="/results" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
+        <NavLink to="/operator/results" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
           Results
         </NavLink>
-        <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
+        <NavLink to="/operator/settings" className={({ isActive }) => `nav-item ${isActive ? "active" : ""}`}>
           Settings
+        </NavLink>
+        <NavLink to="/" className="nav-item">
+          Arena
         </NavLink>
       </nav>
       <div className="app-content">{children}</div>

@@ -48,7 +48,7 @@ export default function CreateDrop() {
     setError("");
     setLoading(true);
     try {
-      const drop = await api<{ id: string }>("/drops", {
+      const drop = await api<{ id: string; whatsapp_sent?: number; whatsapp_total?: number }>("/drops", {
         method: "POST",
         body: {
           offering_id: offeringId,
@@ -59,7 +59,15 @@ export default function CreateDrop() {
           timer_seconds: parseInt(timer) || 90,
         },
       });
-      navigate(`/drop/${drop.id}`);
+      const total = drop.whatsapp_total ?? 0;
+      const sent = drop.whatsapp_sent ?? 0;
+      if (total > 0) {
+        navigate(`/drop/${drop.id}`, {
+          state: { message: `WhatsApp sent to ${sent}/${total} rush list members` },
+        });
+      } else {
+        navigate(`/drop/${drop.id}`);
+      }
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to create drop");
     } finally {

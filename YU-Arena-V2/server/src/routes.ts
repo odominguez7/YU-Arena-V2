@@ -4,7 +4,7 @@ import { query, withTransaction } from "./db";
 import { requireOperator, OperatorRequest, loginHandler } from "./auth";
 import { idempotency } from "./idempotency";
 import { broadcastToRoom } from "./ws";
-import { broadcastDrop } from "./whatsapp";
+import { broadcastDrop, isWhatsAppConfigured, sendTestToNumber, normalizePhone, getWhatsAppFromNumber } from "./whatsapp";
 
 const router = Router();
 
@@ -122,6 +122,34 @@ router.get("/auth/me", requireOperator, safe(async (req: OperatorRequest, res: R
     return;
   }
   res.json(operator);
+}));
+
+router.get("/whatsapp/status", requireOperator, safe(async (_req: OperatorRequest, res: Response) => {
+  res.json({
+    configured: isWhatsAppConfigured(),
+    from_number: getWhatsAppFromNumber(),
+  });
+}));
+
+router.post("/whatsapp/test", requireOperator, safe(async (req: OperatorRequest, res: Response) => {
+  const { sent, total } = await broadcastDrop(
+    req.operatorId!,
+    "test-" + Date.now(),
+    "Test Drop — YU Arena",
+    0,
+    1
+  );
+  res.json({ sent, total, message: `Test broadcast: ${sent}/${total} delivered. Check Cloud Run logs for per-recipient status.` });
+}));
+
+router.post("/whatsapp/test-to", requireOperator, safe(async (req: OperatorRequest, res: Response) => {
+  const { phone } = req.body ?? {};
+  if (!phone || typeof phone !== "string") {
+    res.status(400).json({ error: "phone is required" });
+    return;
+  }
+  const result = await sendTestToNumber(req.operatorId!, phone.trim());
+  res.json(result);
 }));
 
 // ═══════════════════════════════════════════════════════════
@@ -452,11 +480,12 @@ router.post("/drops", requireOperator, idempotency, safe(async (req: OperatorReq
     { drop_id: dropId, title: finalTitle, spots_available: finalSpots, price_cents: finalPrice }
   );
 
-  broadcastDrop(req.operatorId!, dropId, finalTitle, finalPrice, finalSpots).catch((err) =>
-    console.error("WhatsApp broadcast failed:", err)
-  );
+  const broadcast = await broadcastDrop(req.operatorId!, dropId, finalTitle, finalPrice, finalSpots).catch((err) => {
+    console.error("WhatsApp broadcast failed:", err);
+    return { sent: 0, total: 0 };
+  });
 
-  res.status(201).json(created.rows[0]);
+  res.status(201).json({ ...created.rows[0], whatsapp_sent: broadcast.sent, whatsapp_total: broadcast.total });
 }));
 
 router.get("/drops/history", requireOperator, safe(async (req: OperatorRequest, res: Response) => {
@@ -633,6 +662,19 @@ router.post("/drops/:id/claim", idempotency, safe(async (req: Request, res: Resp
       [drop.id]
     );
     res.status(409).json({ error: "Drop has expired" });
+    return;
+  }
+
+  const claimantE164 = normalizePhone(claimant_phone.trim());
+  const rushCheck = await query<{ phone: string }>(
+    `SELECT phone FROM rush_list_members WHERE operator_id = $1`,
+    [drop.operator_id]
+  );
+  const rushPhones = new Set(rushCheck.rows.map((r) => normalizePhone(r.phone)));
+  if (rushPhones.size > 0 && !rushPhones.has(claimantE164)) {
+    res.status(403).json({
+      error: "Only rush list members can claim. Add this number to your rush list in Settings.",
+    });
     return;
   }
 
@@ -839,6 +881,24 @@ router.post("/rush-list", requireOperator, safe(async (req: OperatorRequest, res
 
   const created = await query(`SELECT * FROM rush_list_members WHERE id = $1`, [id]);
   res.status(201).json(created.rows[0]);
+}));
+
+router.post("/rush-list/:id/prioritize", requireOperator, safe(async (req: OperatorRequest, res: Response) => {
+  await query(
+    `UPDATE rush_list_members
+     SET opted_in_at = (SELECT MIN(opted_in_at) - INTERVAL '1 day' FROM rush_list_members WHERE operator_id = $1)
+     WHERE id = $2 AND operator_id = $1`,
+    [req.operatorId!, req.params.id]
+  );
+  const updated = await query(
+    `SELECT * FROM rush_list_members WHERE id = $1 AND operator_id = $2`,
+    [req.params.id, req.operatorId!]
+  );
+  if (!updated.rows[0]) {
+    res.status(404).json({ error: "Rush list member not found" });
+    return;
+  }
+  res.json(updated.rows[0]);
 }));
 
 router.delete("/rush-list/:id", requireOperator, safe(async (req: OperatorRequest, res: Response) => {

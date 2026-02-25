@@ -1,0 +1,16 @@
+{
+  "name": "yu-arena-ace",
+  "version": "1.0.0",
+  "private": true,
+  "description": "ACE — High-Value Conversion Agent for YU Arena (also runs as BLITZ, GHOST)",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "start:ace": "AGENT_STYLE=0 node index.js",
+    "start:blitz": "AGENT_STYLE=1 node index.js",
+    "start:ghost": "AGENT_STYLE=2 node index.js"
+  },
+  "dependencies": {
+    "ws": "^8.19.0"
+  }
+}
