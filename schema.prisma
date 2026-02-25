@@ -1,0 +1,271 @@
+// prisma/schema.prisma
+// YU Arena - Revenue Recovery Platform Schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// CORE ENTITIES
+// ============================================
+
+model Agent {
+  id           String   @id @default(uuid())
+  name         String
+  type         AgentType
+  emoji        String?  // Optional emoji for agent display
+  capabilities String[] // Array of capabilities
+  apiKey       String   @unique
+  status       AgentStatus @default(ACTIVE)
+  email        String?
+  
+  // Timestamps
+  createdAt    DateTime @default(now())
+  lastActive   DateTime @updatedAt
+  
+  // Relations
+  revenueEvents      RevenueEvent[]
+  spotsPosted        Spot[] @relation("PostedBy")
+  spotsClaimed       Spot[] @relation("ClaimedBy")
+  activities         Activity[]
+  dailyPerformance   AgentDailyPerformance[]
+  
+  @@index([status])
+  @@index([type])
+  @@map("agents")
+}
+
+enum AgentType {
+  HAWK      // Spot detector - identifies cancellations
+  ACE       // Demand matcher - converts demand to bookings
+  TRACKER   // Revenue tracker - monitors recovered revenue
+  MONITOR   // Liquidity monitor - tracks fill rates
+  ASSISTANT // Operator assistant - posts supply
+  SCOUT     // Demand scout - represents user demand
+}
+
+enum AgentStatus {
+  ACTIVE
+  INACTIVE
+  SUSPENDED
+}
+
+// ============================================
+// REVENUE TRACKING
+// ============================================
+
+model RevenueEvent {
+  id          String   @id @default(uuid())
+  
+  // Core data
+  amount      Decimal  @db.Decimal(10, 2)
+  spotId      String
+  operatorId  String
+  
+  // Relations
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id])
+  spot        Spot     @relation(fields: [spotId], references: [id])
+  
+  // Metadata
+  timestamp   DateTime @default(now())
+  metadata    Json?
+  
+  @@index([agentId])
+  @@index([timestamp])
+  @@index([operatorId])
+  @@map("revenue_events")
+}
+
+// ============================================
+// SPOT INVENTORY
+// ============================================
+
+model Spot {
+  id              String   @id @default(uuid())
+  
+  // Business data
+  operatorId      String
+  category        String
+  scheduledTime   DateTime
+  price           Decimal  @db.Decimal(10, 2)
+  originalPrice   Decimal? @db.Decimal(10, 2)
+  capacity        Int      @default(1)
+  
+  // Status tracking
+  status          SpotStatus @default(AVAILABLE)
+  
+  // Agent relations
+  postedById      String?
+  postedBy        Agent?   @relation("PostedBy", fields: [postedById], references: [id])
+  claimedById     String?
+  claimedBy       Agent?   @relation("ClaimedBy", fields: [claimedById], references: [id])
+  
+  // Timestamps
+  postedAt        DateTime @default(now())
+  claimedAt       DateTime?
+  completedAt     DateTime?
+  expiresAt       DateTime
+  
+  // Metadata
+  metadata        Json?    // Location, instructor, class name, etc.
+  
+  // Relations
+  revenueEvents   RevenueEvent[]
+  
+  @@index([status])
+  @@index([operatorId])
+  @@index([category])
+  @@index([scheduledTime])
+  @@index([expiresAt])
+  @@map("spots")
+}
+
+enum SpotStatus {
+  AVAILABLE
+  CLAIMED
+  COMPLETED
+  EXPIRED
+  CANCELLED
+}
+
+// ============================================
+// NETWORK METRICS
+// ============================================
+
+model DailyMetrics {
+  id                      String   @id @default(uuid())
+  date                    DateTime @unique @db.Date
+  
+  // Revenue metrics
+  totalRevenueRecovered   Decimal  @db.Decimal(10, 2) @default(0)
+  revenueEventsCount      Int      @default(0)
+  
+  // Spot metrics
+  spotsPosted             Int      @default(0)
+  spotsFilled             Int      @default(0)
+  spotsExpired            Int      @default(0)
+  fillRate                Decimal  @db.Decimal(5, 2) @default(0) // Percentage
+  
+  // Time metrics
+  avgTimeToFillMinutes    Int?     // Average time from posted to claimed
+  
+  // Network metrics
+  activeAgents            Int      @default(0)
+  activeOperators         Int      @default(0)
+  activeDemand            Int      @default(0)
+  
+  // Metadata
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+  
+  @@index([date])
+  @@map("daily_metrics")
+}
+
+model AgentDailyPerformance {
+  id                  String   @id @default(uuid())
+  
+  // Relations
+  agentId             String
+  agent               Agent    @relation(fields: [agentId], references: [id])
+  date                DateTime @db.Date
+  
+  // Performance metrics
+  spotsHandled        Int      @default(0)
+  revenueGenerated    Decimal  @db.Decimal(10, 2) @default(0)
+  successRate         Decimal  @db.Decimal(5, 2) @default(0)
+  avgResponseTimeMs   Int?
+  requestCount        Int      @default(0)
+  
+  // Timestamps
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+  
+  @@unique([agentId, date])
+  @@index([date])
+  @@map("agent_daily_performance")
+}
+
+// ============================================
+// ACTIVITY FEED
+// ============================================
+
+model Activity {
+  id          String   @id @default(uuid())
+  
+  // Relations
+  agentId     String
+  agent       Agent    @relation(fields: [agentId], references: [id])
+  
+  // Activity data
+  type        ActivityType
+  description String
+  metadata    Json?
+  
+  // Timestamps
+  timestamp   DateTime @default(now())
+  
+  @@index([timestamp])
+  @@index([agentId])
+  @@index([type])
+  @@map("activities")
+}
+
+enum ActivityType {
+  AGENT_REGISTERED
+  SPOT_POSTED
+  SPOT_CLAIMED
+  SPOT_COMPLETED
+  REVENUE_RECOVERED
+  AGENT_ERROR
+}
+
+// ============================================
+// RATE LIMITING
+// ============================================
+
+model RateLimit {
+  id          String   @id @default(uuid())
+  agentId     String
+  endpoint    String
+  requestCount Int     @default(0)
+  windowStart DateTime
+  windowEnd   DateTime
+  
+  @@unique([agentId, endpoint, windowStart])
+  @@index([agentId])
+  @@index([windowEnd])
+  @@map("rate_limits")
+}
+
+// ============================================
+// OPERATOR DATA (for demo purposes)
+// ============================================
+
+model Operator {
+  id              String   @id @default(uuid())
+  name            String
+  category        String   // boutique_fitness, salon, wellness, etc.
+  location        String   // neighborhood or address
+  
+  // Business metrics
+  totalRevenue    Decimal  @db.Decimal(10, 2) @default(0)
+  spotsFilled     Int      @default(0)
+  fillRate        Decimal  @db.Decimal(5, 2) @default(0)
+  
+  // Metadata
+  metadata        Json?    // Contact, hours, etc.
+  
+  // Timestamps
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  @@index([category])
+  @@map("operators")
+}
