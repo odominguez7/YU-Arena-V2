@@ -14,6 +14,12 @@ usage() {
 Usage:
   ./run-agents.sh [--access-code <code>] [--operator-id <id>] [--base-url <url>]
 
+Agents launched:
+  🦅 HAWK   — Cancellation detection (scans every 30s, creates drops)
+  🎯 ACE    — High-value conversion (yoga/wellness specialist)
+  ⚡ BLITZ  — Speed-based conversion (universal fast-claimer)
+  👻 GHOST  — Premium slot conversion (VIP/express specialist)
+
 Options:
   --access-code   Operator access code (default: demo1234)
   --operator-id   Operator ID (auto-detected via login if omitted)
@@ -111,52 +117,101 @@ if [[ -z "${OPERATOR_ID}" ]]; then
   echo
 fi
 
+# ─── Install agent dependencies ──────────────────────────
+
+for agent_dir in hawk ace; do
+  if [[ ! -d "${ROOT_DIR}/agents/${agent_dir}/node_modules" ]]; then
+    echo "Installing dependencies for ${agent_dir}..."
+    (cd "${ROOT_DIR}/agents/${agent_dir}" && npm install --silent)
+  fi
+done
+
 # ─── Launch agents ──────────────────────────────────────
+
+PIDS=()
 
 cleanup() {
   echo
-  echo "Stopping agents..."
-  kill "${SCOUT_PID:-}" "${CLOSER_PID:-}" 2>/dev/null || true
+  echo "Stopping all agents..."
+  for pid in "${PIDS[@]}"; do
+    kill "${pid}" 2>/dev/null || true
+  done
 }
 trap cleanup EXIT INT TERM
 
 echo "═══════════════════════════════════════════"
-echo "  YU Arena V2 — Agent Runner"
+echo "  YU Arena V2 — Multi-Agent Runner"
 echo "═══════════════════════════════════════════"
-echo "  Server:      ${BASE_URL}"
-echo "  Operator:    ${OPERATOR_ID}"
-echo "  Drop timer:  ${DROP_TIMER_SECONDS}s"
+echo "  Server:        ${BASE_URL}"
+echo "  Operator:      ${OPERATOR_ID}"
+echo "  Drop timer:    ${DROP_TIMER_SECONDS}s"
 echo "  Scan interval: $((DROP_INTERVAL_MS / 1000))s"
 echo "═══════════════════════════════════════════"
 echo
+echo "Starting agents..."
+echo
 
+# 🦅 HAWK — Detection Agent
 (
-  cd "${ROOT_DIR}/agents/scout"
+  cd "${ROOT_DIR}/agents/hawk"
   OPERATOR_ID="${OPERATOR_ID}" \
   BASE_URL="${BASE_URL}" \
   ACCESS_CODE="${ACCESS_CODE}" \
   JWT="${JWT:-}" \
-  DROP_INTERVAL_MS="${DROP_INTERVAL_MS}" \
+  SCAN_INTERVAL_MS="${DROP_INTERVAL_MS}" \
   DROP_TIMER_SECONDS="${DROP_TIMER_SECONDS}" \
   node index.js
 ) &
-SCOUT_PID=$!
+PIDS+=($!)
+echo "  🦅 HAWK  (Detection)   PID: ${PIDS[-1]}"
 
 sleep 1
 
+# 🎯 ACE — High-Value Conversion
 (
-  cd "${ROOT_DIR}/agents/closer"
+  cd "${ROOT_DIR}/agents/ace"
   OPERATOR_ID="${OPERATOR_ID}" \
   BASE_URL="${BASE_URL}" \
   ACCESS_CODE="${ACCESS_CODE}" \
   JWT="${JWT:-}" \
+  AGENT_STYLE=0 \
   node index.js
 ) &
-CLOSER_PID=$!
+PIDS+=($!)
+echo "  🎯 ACE   (Conversion)  PID: ${PIDS[-1]}"
 
-echo "Scout PID:  ${SCOUT_PID}"
-echo "Closer PID: ${CLOSER_PID}"
-echo "Press Ctrl+C to stop both."
+sleep 1
+
+# ⚡ BLITZ — Speed Conversion
+(
+  cd "${ROOT_DIR}/agents/ace"
+  OPERATOR_ID="${OPERATOR_ID}" \
+  BASE_URL="${BASE_URL}" \
+  ACCESS_CODE="${ACCESS_CODE}" \
+  JWT="${JWT:-}" \
+  AGENT_STYLE=1 \
+  node index.js
+) &
+PIDS+=($!)
+echo "  ⚡ BLITZ (Speed)       PID: ${PIDS[-1]}"
+
+sleep 1
+
+# 👻 GHOST — Premium Conversion
+(
+  cd "${ROOT_DIR}/agents/ace"
+  OPERATOR_ID="${OPERATOR_ID}" \
+  BASE_URL="${BASE_URL}" \
+  ACCESS_CODE="${ACCESS_CODE}" \
+  JWT="${JWT:-}" \
+  AGENT_STYLE=2 \
+  node index.js
+) &
+PIDS+=($!)
+echo "  👻 GHOST (Premium)     PID: ${PIDS[-1]}"
+
+echo
+echo "All 4 agents running. Press Ctrl+C to stop."
 echo
 
 wait
